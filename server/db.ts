@@ -3,7 +3,9 @@ import path from "path";
 import crypto from "crypto";
 import { createInitialDb, type DbState } from "./seed.ts";
 
-const DATA_DIR = path.resolve(process.cwd(), "data");
+const DATA_DIR = process.env.VERCEL
+  ? path.resolve("/tmp", "kupilab-data")
+  : path.resolve(process.cwd(), "data");
 const DB_FILE = path.resolve(DATA_DIR, "db.json");
 
 let cachedDb: DbState | null = null;
