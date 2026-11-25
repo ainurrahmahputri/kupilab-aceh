@@ -1,0 +1,6 @@
+{
+  "name": "KupiLab Aceh",
+  "description": "Roastery kopi spesialti, toko biji kopi sangrai Nusantara, ensiklopedia kopi Indonesia, kalkulator seduh, dan jurnal seduh dari Banda Aceh.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
