@@ -28,26 +28,36 @@ interface SessionEntry {
 }
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const sessions = new Map<string, SessionEntry>();
+const revokedTokens = new Map<string, number>();
 
-function pruneSessions(): void {
+function getSigningKey(): Buffer {
+  const raw =
+    process.env.SESSION_SECRET ||
+    process.env.ADMIN_PASSCODE ||
+    "kupilab-aceh-session-key-v1";
+  return crypto.createHash("sha256").update(raw).digest();
+}
+
+function pruneRevoked(): void {
   const now = Date.now();
-  for (const [token, entry] of sessions.entries()) {
-    if (entry.expiresAt <= now) {
-      sessions.delete(token);
+  for (const [token, exp] of revokedTokens.entries()) {
+    if (exp <= now) {
+      revokedTokens.delete(token);
     }
   }
 }
 
 function issueToken(role: "customer" | "admin", userId?: string): string {
-  pruneSessions();
-  const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, {
+  pruneRevoked();
+  const payload = {
     role,
     userId,
     expiresAt: Date.now() + SESSION_TTL_MS,
-  });
-  return token;
+    jti: crypto.randomBytes(8).toString("hex"),
+  };
+  const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const sig = crypto.createHmac("sha256", getSigningKey()).update(body).digest("base64url");
+  return `${body}.${sig}`;
 }
 
 function readBearerToken(req: Request): string | null {
@@ -59,14 +69,30 @@ function readBearerToken(req: Request): string | null {
 
 function getSession(req: Request, expectedRole: "customer" | "admin"): SessionEntry | null {
   const token = readBearerToken(req);
-  if (!token) return null;
-  const entry = sessions.get(token);
-  if (!entry || entry.role !== expectedRole) return null;
-  if (entry.expiresAt <= Date.now()) {
-    sessions.delete(token);
+  if (!token || revokedTokens.has(token)) return null;
+  const dot = token.indexOf(".");
+  if (dot <= 0) return null;
+  const body = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  if (!body || !sig) return null;
+  try {
+    const expectedSig = crypto.createHmac("sha256", getSigningKey()).update(body).digest("base64url");
+    const a = Buffer.from(sig, "utf8");
+    const b = Buffer.from(expectedSig, "utf8");
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    const entry = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as SessionEntry;
+    if (!entry || entry.role !== expectedRole) return null;
+    if (typeof entry.expiresAt !== "number" || entry.expiresAt <= Date.now()) return null;
+    return entry;
+  } catch {
     return null;
   }
-  return entry;
+}
+
+function revokeToken(token: string | null): void {
+  if (!token) return;
+  pruneRevoked();
+  revokedTokens.set(token, Date.now() + SESSION_TTL_MS);
 }
 
 function getEnvAdminPasscode(): string {
@@ -231,8 +257,7 @@ export function createApiApp(): Express {
   });
 
   app.post("/api/auth/logout", (req, res) => {
-    const token = readBearerToken(req);
-    if (token) sessions.delete(token);
+    revokeToken(readBearerToken(req));
     res.json({ ok: true });
   });
 
@@ -457,8 +482,7 @@ export function createApiApp(): Express {
   });
 
   app.post("/api/admin/logout", (req, res) => {
-    const token = readBearerToken(req);
-    if (token) sessions.delete(token);
+    revokeToken(readBearerToken(req));
     res.json({ ok: true });
   });
 
